@@ -1,0 +1,33 @@
+#!/usr/bin/ruby
+
+# walk /proc/<pids>, list processes with big files opened, and show the file pointer inside
+# useful to monitor work on big files, eg md5sum
+
+def do_stuff(pid, prefix='', limit=1024*1024)
+	Dir.chdir("/proc/#{pid}")
+
+	fds = Dir.entries("fd/").map { |i| i.to_i } - [0]
+
+	fdpos = {}
+	fdsize = {}
+
+	fds = fds.find_all { |fd| File.symlink?("fd/#{fd}") and File.file?(File.readlink("fd/#{fd}")) }
+	fds.each { |fd|
+		fdsize[fd] = File.size(File.readlink("fd/#{fd}"))
+		fdpos[fd] = File.read("fdinfo/#{fd}").split[1].to_i
+	}
+	fds.delete_if { |fd| fdsize[fd] < limit or fdpos[fd] == 0}
+
+	fds.sort.each { |fd|
+		puts "#{prefix} #{'%.02f%%' % (100.0*fdpos[fd]/fdsize[fd])} #{fdpos[fd]/1024/1024}M/#{fdsize[fd]/1024/1024}M #{File.readlink("fd/#{fd}")}"
+	}
+	puts "no bigfile found" if fds.empty? and prefix == ''
+end
+
+if pid = ARGV.shift
+	do_stuff(pid, 1024)
+else
+	Dir.entries('/proc/').grep(/^\d+$/).find_all { |pid| File.readable?("/proc/#{pid}/fd") }.each { |pid|
+		do_stuff(pid, "#{pid} #{File.basename(File.readlink("/proc/#{pid}/exe")) rescue ''} ")
+	}
+end
